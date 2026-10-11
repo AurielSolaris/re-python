@@ -52,9 +52,15 @@ so nothing in the runtime imports `_pydecimal`.
 - **Bug fix (upstream has it too):** a NUL after the first character cut the
   specifier short for libmpdec, so `format(Decimal(5), '5\0xyz')` returned
   `'    5'`. Such specifiers now raise `ValueError` like any other invalid one.
-- **Changed:** `decimal.py` imports `_decimal` directly. `_decimal` is always
-  built: Windows always builds it, and `configure` falls back to the bundled
-  libmpdec when no system copy is found.
+- **Changed:** `decimal.py` imports `_decimal` directly. Default builds
+  always have `_decimal`: Windows always builds it, and `configure` falls
+  back to the bundled libmpdec when no system copy is found. A build that
+  turns `_decimal` off on purpose (`Modules/Setup.local`, or
+  `py_cv_module__decimal=n/a`) no longer has a `decimal` module at all.
+- **CI:** the MSan job used to disable `_decimal`, because a system libmpdec
+  that isn't built with MSan causes false positives. It now builds
+  `_decimal` against the bundled libmpdec (`--without-system-libmpdec`),
+  which is compiled with MSan, so MSan also checks the new C formatter.
 - **Moved:** `Lib/_pydecimal.py` to `Lib/test/support/_pydecimal.py`, with
   its content unchanged so upstream fixes still cherry-pick. It is the
   reference implementation for the `Py*` variants of `test_decimal`,

@@ -80,9 +80,11 @@ jobs:
         echo "MSAN_OPTIONS=${SAN_LOG_OPTION} allocator_may_return_null=1 handle_segv=0" >> "$GITHUB_ENV"
         # MSan reports false positives for memory initialized by libraries
         # that are not built with MSan, so disable modules that use them.
+        # re:python: decimal requires _decimal, so it is built against the
+        # bundled libmpdec instead (compiled with MSan, see Configure CPython).
         {
           echo '*disabled*'
-          echo '_bz2 _ctypes _curses _curses_panel _dbm _decimal _gdbm _hashlib'
+          echo '_bz2 _ctypes _curses _curses_panel _dbm _gdbm _hashlib'
           echo '_lzma _sqlite3 _ssl _tkinter _uuid _zstd readline zlib'
         } > Modules/Setup.local
       env:
@@ -125,6 +127,7 @@ jobs:
           && '--with-memory-sanitizer'
           || '--with-undefined-behavior-sanitizer'
         }}
+        ${{ inputs.sanitizer == 'MSan' && '--without-system-libmpdec' || '' }}
         ${{ inputs.sanitizer == 'MSan' && '--with-assertions' || '--with-pydebug' }}
         ${{ inputs.sanitizer == 'TSan' && '--with-openssl="$OPENSSL_DIR" --with-openssl-rpath=auto' || '' }}
         ${{ inputs.free-threading && '--disable-gil' || '' }}
