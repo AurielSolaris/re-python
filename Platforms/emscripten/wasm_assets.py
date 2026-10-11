@@ -46,8 +46,6 @@ OMIT_FILES = (
     # webbrowser
     "antigravity.py",
     "webbrowser.py",
-    # Pure Python implementations of C extensions
-    "_pydecimal.py",
     # concurrent threading
     "concurrent/futures/thread.py",
     # Misc unused or large files

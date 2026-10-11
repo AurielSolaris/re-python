@@ -916,8 +916,8 @@ class TestGetsourceStdlib(unittest.TestCase):
             self.assertEqual(src.splitlines(True), lines)
 
     def test_getsource_stdlib_decimal(self):
-        # Pure Python implementation
-        decimal = import_helper.import_fresh_module('decimal', blocked=['_decimal'])
+        # Pure Python reference implementation (only kept for the tests)
+        from test.support import _pydecimal as decimal
         with support.swap_item(sys.modules, 'decimal', decimal):
             src = inspect.getsource(decimal.Decimal)
             lines, lineno = inspect.getsourcelines(decimal.Decimal)
