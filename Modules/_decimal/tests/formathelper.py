@@ -35,7 +35,7 @@ from test.support.import_helper import import_fresh_module
 from shutil import which
 
 C = import_fresh_module('decimal', fresh=['_decimal'])
-P = import_fresh_module('decimal', blocked=['_decimal'])
+from test.support import _pydecimal as P
 
 
 windows_lang_strings = [

@@ -53,7 +53,8 @@ if sys.platform == 'darwin':
 
 
 C = import_fresh_module('decimal', fresh=['_decimal'])
-P = import_fresh_module('decimal', blocked=['_decimal'])
+# The pure-Python reference implementation; it is not part of the stdlib.
+from test.support import _pydecimal as P
 import decimal as orig_sys_decimal
 
 # fractions module must import the correct decimal module.
@@ -5789,8 +5790,8 @@ class CWhitebox(unittest.TestCase):
             sd.copy()
 
     def test_format_fallback_capitals(self):
-        # Fallback to _pydecimal formatting (triggered by `#` format which
-        # is unsupported by mpdecimal) should honor the current context.
+        # The C formatting for specifiers that mpdecimal does not support
+        # (e.g. `#`) should honor the current context.
         x = C.Decimal('6.09e+23')
         self.assertEqual(format(x, '#'), '6.09E+23')
         with C.localcontext(capitals=0):
@@ -5801,6 +5802,55 @@ class CWhitebox(unittest.TestCase):
         self.assertEqual(format(y, '#.1f'), '6.1')
         with C.localcontext(rounding=C.ROUND_DOWN):
             self.assertEqual(format(y, '#.1f'), '6.0')
+
+    def test_format_embedded_nul(self):
+        # A NUL after the first character used to truncate the specifier
+        # passed to mpdecimal, so the rest of it was silently ignored.
+        x = C.Decimal(5)
+        for fmt in ['5\0xyz', '>\0', 'z\0^-#,%', '0\0>+zn']:
+            with self.subTest(fmt=fmt):
+                self.assertRaises(ValueError, format, x, fmt)
+        # NUL as the fill character is valid
+        self.assertEqual(format(x, '\0>3'), '\0\0' + '5')
+        self.assertEqual(format(x, '\0>#3'), '\0' + '5.')
+
+    def test_format_ext_matches_pydecimal(self):
+        # The specifiers that mpdecimal does not support are formatted by
+        # C code ported from _pydecimal; the output must be identical.
+        values = ['0', '-0', '0E+3', '-0E-5', '1', '-1', '0.5', '-0.05',
+                  '6.09', '9.995', '99.97', '123456.789', '-1234567',
+                  '1E+10', '1.5E-10', '12345678901234567890.123456789',
+                  'Inf', '-Inf', 'NaN', '-NaN123', 'sNaN']
+        specs = ['#', '_', '#_', 'z', 'z.1f', '#.0f', '#.0e', '#.3g', '#g',
+                 '#%', '#.2%', '_.2f', '.3_f', '.,f', '._e', ',.4_f',
+                 '010_', '015_.3f', '#012,.2_f', '0=12_', '*^#20_.3f',
+                 '+#_', ' #e', 'z#.2f', '#n', '015.,n', '.2_n', '#.0n',
+                 '٣', '#١٢.٢f', '\U0001F600^#15_']
+        for rounding in [C.ROUND_HALF_EVEN, C.ROUND_DOWN, C.ROUND_UP]:
+            for caps in [0, 1]:
+                cctx = C.Context(rounding=rounding, capitals=caps)
+                pctx = P.Context(rounding=rounding, capitals=caps)
+                for value in values:
+                    for fmt in specs:
+                        with self.subTest(value=value, fmt=fmt,
+                                          rounding=rounding, caps=caps):
+                            with C.localcontext(cctx):
+                                got = format(C.Decimal(value), fmt)
+                            expected = P.Decimal(value).__format__(fmt, pctx)
+                            self.assertEqual(got, expected)
+
+    def test_format_ext_override(self):
+        # The override dict also applies to the specifiers mpdecimal
+        # does not support.
+        x = C.Decimal('1234567.891')
+        crazy = {'decimal_point': '&', 'thousands_sep': '-',
+                 'grouping': ''.join(map(chr, [1, 4, 2, 0]))}
+        self.assertEqual(x.__format__('#n', crazy), '12-3456-7&891')
+        self.assertEqual(x.__format__('.2_n', crazy), '1&2e+6')
+        self.assertEqual(x.__format__('012.4_n', crazy), '000-1&235e+6')
+        self.assertRaises(ValueError, x.__format__, '#n',
+                          {'decimal_point': 'xxxxx'})
+        self.assertRaises(TypeError, x.__format__, '#n', [])
 
 @requires_docstrings
 @requires_cdecimal

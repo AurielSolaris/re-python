@@ -51,10 +51,10 @@ from test.support.import_helper import import_fresh_module
 from randdec import randfloat, all_unary, all_binary, all_ternary
 from randdec import unary_optarg, binary_optarg, ternary_optarg
 from formathelper import rand_format, rand_locale
-from _pydecimal import _dec_from_triple
+from test.support._pydecimal import _dec_from_triple
 
 C = import_fresh_module('decimal', fresh=['_decimal'])
-P = import_fresh_module('decimal', blocked=['_decimal'])
+from test.support import _pydecimal as P
 EXIT_STATUS = 0
 
 
