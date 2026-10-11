@@ -1,6 +1,5 @@
 # Tests universal newline support for both reading and parsing files.
 import io
-import _pyio as pyio
 import unittest
 import os
 import sys
@@ -34,8 +33,6 @@ DATA_SPLIT = [x + "\n" for x in DATA_TEMPLATE]
 class CTest:
     open = io.open
 
-class PyTest:
-    open = staticmethod(pyio.open)
 
 class TestGenericUnivNewlines:
     # use a class variable DATA to define the data to write to the file
@@ -93,13 +90,11 @@ class TestCRNewlines(TestGenericUnivNewlines):
     NEWLINE = '\r'
     DATA = DATA_CR
 class CTestCRNewlines(CTest, TestCRNewlines, unittest.TestCase): pass
-class PyTestCRNewlines(PyTest, TestCRNewlines, unittest.TestCase): pass
 
 class TestLFNewlines(TestGenericUnivNewlines):
     NEWLINE = '\n'
     DATA = DATA_LF
 class CTestLFNewlines(CTest, TestLFNewlines, unittest.TestCase): pass
-class PyTestLFNewlines(PyTest, TestLFNewlines, unittest.TestCase): pass
 
 class TestCRLFNewlines(TestGenericUnivNewlines):
     NEWLINE = '\r\n'
@@ -112,13 +107,11 @@ class TestCRLFNewlines(TestGenericUnivNewlines):
             pos = fp.tell()
         self.assertEqual(repr(fp.newlines), repr(self.NEWLINE))
 class CTestCRLFNewlines(CTest, TestCRLFNewlines, unittest.TestCase): pass
-class PyTestCRLFNewlines(PyTest, TestCRLFNewlines, unittest.TestCase): pass
 
 class TestMixedNewlines(TestGenericUnivNewlines):
     NEWLINE = ('\r', '\n')
     DATA = DATA_MIXED
 class CTestMixedNewlines(CTest, TestMixedNewlines, unittest.TestCase): pass
-class PyTestMixedNewlines(PyTest, TestMixedNewlines, unittest.TestCase): pass
 
 if __name__ == '__main__':
     unittest.main()

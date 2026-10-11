@@ -48,7 +48,6 @@ OMIT_FILES = (
     "webbrowser.py",
     # Pure Python implementations of C extensions
     "_pydecimal.py",
-    "_pyio.py",
     # concurrent threading
     "concurrent/futures/thread.py",
     # Misc unused or large files

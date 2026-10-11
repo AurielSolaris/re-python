@@ -12,17 +12,7 @@ from test.support import refleak_helper
 from .runtests import HuntRefleak
 from .utils import clear_caches
 
-try:
-    from _abc import _get_dump
-except ImportError:
-    import weakref
-
-    def _get_dump(cls):
-        # Reimplement _get_dump() for pure-Python implementation of
-        # the abc module (Lib/_py_abc.py)
-        registry_weakrefs = set(weakref.ref(obj) for obj in cls._abc_registry)
-        return (registry_weakrefs, cls._abc_cache,
-                cls._abc_negative_cache, cls._abc_negative_cache_version)
+from _abc import _get_dump
 
 
 def save_support_xml(filename):

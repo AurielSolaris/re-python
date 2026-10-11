@@ -807,7 +807,7 @@ class PatchAtomicWrites:
         self._children = []
 
     def __enter__(self):
-        import _pyio
+        import io
 
         oldwrite = os.write
 
@@ -818,10 +818,28 @@ class PatchAtomicWrites:
             self.seen_write = True
             return oldwrite(fd, data[:self.truncate_at_length])
 
-        # Need to patch _io to be _pyio, so that io.FileIO is affected by the
-        # os.write patch.
+        # C FileIO calls write(2) directly, so route the raw writes through
+        # os.write (patched above) under the real C BufferedWriter.
+        class OsWriteRawIO(io.RawIOBase):
+            def __init__(self, fd):
+                self._fd = fd
+            def writable(self):
+                return True
+            def write(self, b):
+                return os.write(self._fd, bytes(b))
+            def close(self):
+                if not self.closed:
+                    os.close(self._fd)
+                super().close()
+
+        class FakeIO:
+            @staticmethod
+            def open(fd, mode):
+                assert mode == 'wb', mode
+                return io.BufferedWriter(OsWriteRawIO(fd))
+
         self.children = [
-            support.swap_attr(_bootstrap_external, '_io', _pyio),
+            support.swap_attr(_bootstrap_external, '_io', FakeIO),
             support.swap_attr(os, 'write', write)
         ]
         for child in self.children:

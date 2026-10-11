@@ -5,7 +5,6 @@ from array import array
 from weakref import proxy
 
 import io
-import _pyio as pyio
 
 from test.support import gc_collect
 from test.support.os_helper import TESTFN
@@ -134,9 +133,6 @@ class AutoFileTests:
 
 class CAutoFileTests(AutoFileTests, unittest.TestCase):
     open = io.open
-
-class PyAutoFileTests(AutoFileTests, unittest.TestCase):
-    open = staticmethod(pyio.open)
 
 
 class OtherFileTests:
@@ -353,9 +349,6 @@ class OtherFileTests:
 
 class COtherFileTests(OtherFileTests, unittest.TestCase):
     open = io.open
-
-class PyOtherFileTests(OtherFileTests, unittest.TestCase):
-    open = staticmethod(pyio.open)
 
 
 if __name__ == '__main__':

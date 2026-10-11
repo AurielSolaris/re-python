@@ -1,4 +1,3 @@
-import _pyio
 import array
 import contextlib
 import errno
@@ -3895,7 +3894,7 @@ class StripExtraTests(unittest.TestCase):
             b"zzz", zipfile._Extra.strip(b"zzz", (self.ZIP64_EXTRA,)))
 
 
-class StatIO(_pyio.BytesIO):
+class StatIO(io.BytesIO):
     """Buffer which remembers the number of bytes that were read."""
 
     def __init__(self):

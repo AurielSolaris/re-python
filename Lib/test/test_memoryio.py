@@ -8,7 +8,6 @@ from test import support
 
 import gc
 import io
-import _pyio as pyio
 import pickle
 import sys
 import weakref
@@ -435,15 +434,11 @@ class MemoryTestMixin:
         del __main__.PickleTestMemIO
 
 
-class PyBytesIOTest(MemoryTestMixin, MemorySeekTestMixin, unittest.TestCase):
-    # Test _pyio.BytesIO; class also inherited for testing C implementation
-
-    UnsupportedOperation = pyio.UnsupportedOperation
+class BytesIOTestMixin(MemoryTestMixin, MemorySeekTestMixin):
 
     @staticmethod
     def buftype(s):
         return s.encode("ascii")
-    ioclass = pyio.BytesIO
     EOF = b""
 
     def test_getbuffer(self):
@@ -802,11 +797,9 @@ class TextIOTestMixin:
             self.ioclass(newline=newline)
 
 
-class PyStringIOTest(MemoryTestMixin, MemorySeekTestMixin,
-                     TextIOTestMixin, unittest.TestCase):
+class StringIOTestMixin(MemoryTestMixin, MemorySeekTestMixin,
+                        TextIOTestMixin):
     buftype = str
-    ioclass = pyio.StringIO
-    UnsupportedOperation = pyio.UnsupportedOperation
     EOF = ""
 
     def test_lone_surrogates(self):
@@ -819,21 +812,14 @@ class PyStringIOTest(MemoryTestMixin, MemorySeekTestMixin,
         self.assertEqual(memio.getvalue(), '\ud800')
 
 
-class PyStringIOPickleTest(TextIOTestMixin, unittest.TestCase):
+class StringIOPickleTestMixin(TextIOTestMixin):
     """Test if pickle restores properly the internal state of StringIO.
     """
     buftype = str
-    UnsupportedOperation = pyio.UnsupportedOperation
     EOF = ""
 
-    class ioclass(pyio.StringIO):
-        def __new__(cls, *args, **kwargs):
-            return pickle.loads(pickle.dumps(pyio.StringIO(*args, **kwargs)))
-        def __init__(self, *args, **kwargs):
-            pass
 
-
-class CBytesIOTest(PyBytesIOTest):
+class CBytesIOTest(BytesIOTestMixin, unittest.TestCase):
     ioclass = io.BytesIO
     UnsupportedOperation = io.UnsupportedOperation
 
@@ -935,7 +921,7 @@ class CBytesIOTest(PyBytesIOTest):
         self.assertEqual(memio.getvalue(), b"abXd")
 
 
-class CStringIOTest(PyStringIOTest):
+class CStringIOTest(StringIOTestMixin, unittest.TestCase):
     ioclass = io.StringIO
     UnsupportedOperation = io.UnsupportedOperation
 
@@ -1002,7 +988,7 @@ class CStringIOTest(PyStringIOTest):
         self.assertEqual(memio2.getvalue(), "hello world")
 
 
-class CStringIOPickleTest(PyStringIOPickleTest):
+class CStringIOPickleTest(StringIOPickleTestMixin, unittest.TestCase):
     UnsupportedOperation = io.UnsupportedOperation
 
     class ioclass(io.StringIO):

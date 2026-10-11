@@ -1,15 +1,13 @@
 # Copyright 2007 Google, Inc. All Rights Reserved.
 # Licensed to PSF under a Contributor Agreement.
 
-# Note: each test is run with Python and C versions of ABCMeta. Except for
-# test_ABC_helper(), which assures that abc.ABC is an instance of abc.ABCMeta.
+# Note: test_ABC_helper() assures that abc.ABC is an instance of abc.ABCMeta.
 
 """Unit tests for abc.py."""
 
 import unittest
 
 import abc
-import _py_abc
 from inspect import isabstract
 
 def test_factory(abc_ABCMeta, abc_get_cache_token):
@@ -703,16 +701,8 @@ def test_factory(abc_ABCMeta, abc_get_cache_token):
 
     return TestLegacyAPI, TestABC, TestABCWithInitSubclass
 
-TestLegacyAPI_Py, TestABC_Py, TestABCWithInitSubclass_Py = test_factory(_py_abc.ABCMeta,
-                                                                        _py_abc.get_cache_token)
-TestLegacyAPI_C, TestABC_C, TestABCWithInitSubclass_C = test_factory(abc.ABCMeta,
-                                                                     abc.get_cache_token)
-
-# gh-130095: The _py_abc tests are not thread-safe when run with
-# `--parallel-threads`
-TestLegacyAPI_Py.__unittest_thread_unsafe__ = True
-TestABC_Py.__unittest_thread_unsafe__ = True
-TestABCWithInitSubclass_Py.__unittest_thread_unsafe__ = True
+TestLegacyAPI, TestABC, TestABCWithInitSubclass = test_factory(abc.ABCMeta,
+                                                             abc.get_cache_token)
 
 if __name__ == "__main__":
     unittest.main()

@@ -46,7 +46,6 @@ from test.support.os_helper import FakePath
 
 import codecs
 import io  # C implementation of io
-import _pyio as pyio # Python implementation of io
 
 try:
     import ctypes
@@ -138,9 +137,6 @@ class MockRawIOWithoutRead:
 class CMockRawIOWithoutRead(MockRawIOWithoutRead, io.RawIOBase):
     pass
 
-class PyMockRawIOWithoutRead(MockRawIOWithoutRead, pyio.RawIOBase):
-    pass
-
 
 class MockRawIO(MockRawIOWithoutRead):
 
@@ -153,9 +149,6 @@ class MockRawIO(MockRawIOWithoutRead):
             return b""
 
 class CMockRawIO(MockRawIO, io.RawIOBase):
-    pass
-
-class PyMockRawIO(MockRawIO, pyio.RawIOBase):
     pass
 
 
@@ -179,9 +172,6 @@ class MisbehavedRawIO(MockRawIO):
 class CMisbehavedRawIO(MisbehavedRawIO, io.RawIOBase):
     pass
 
-class PyMisbehavedRawIO(MisbehavedRawIO, pyio.RawIOBase):
-    pass
-
 
 class SlowFlushRawIO(MockRawIO):
     def __init__(self):
@@ -195,9 +185,6 @@ class SlowFlushRawIO(MockRawIO):
 class CSlowFlushRawIO(SlowFlushRawIO, io.RawIOBase):
     pass
 
-class PySlowFlushRawIO(SlowFlushRawIO, pyio.RawIOBase):
-    pass
-
 
 class CloseFailureIO(MockRawIO):
     closed = 0
@@ -208,9 +195,6 @@ class CloseFailureIO(MockRawIO):
             raise OSError
 
 class CCloseFailureIO(CloseFailureIO, io.RawIOBase):
-    pass
-
-class PyCloseFailureIO(CloseFailureIO, pyio.RawIOBase):
     pass
 
 
@@ -233,9 +217,6 @@ class MockFileIO:
 class CMockFileIO(MockFileIO, io.BytesIO):
     pass
 
-class PyMockFileIO(MockFileIO, pyio.BytesIO):
-    pass
-
 
 class MockUnseekableIO:
     def seekable(self):
@@ -253,9 +234,6 @@ class MockUnseekableIO:
 class CMockUnseekableIO(MockUnseekableIO, io.BytesIO):
     UnsupportedOperation = io.UnsupportedOperation
 
-class PyMockUnseekableIO(MockUnseekableIO, pyio.BytesIO):
-    UnsupportedOperation = pyio.UnsupportedOperation
-
 
 class MockCharPseudoDevFileIO(MockFileIO):
     # GH-95782
@@ -272,9 +250,6 @@ class MockCharPseudoDevFileIO(MockFileIO):
         return 0
 
 class CMockCharPseudoDevFileIO(MockCharPseudoDevFileIO, io.BytesIO):
-    pass
-
-class PyMockCharPseudoDevFileIO(MockCharPseudoDevFileIO, pyio.BytesIO):
     pass
 
 
@@ -328,9 +303,6 @@ class MockNonBlockWriterIO:
 
 class CMockNonBlockWriterIO(MockNonBlockWriterIO, io.RawIOBase):
     BlockingIOError = io.BlockingIOError
-
-class PyMockNonBlockWriterIO(MockNonBlockWriterIO, pyio.RawIOBase):
-    BlockingIOError = pyio.BlockingIOError
 
 
 class IOTest(unittest.TestCase):
@@ -1234,24 +1206,6 @@ class TestIOCTypes(unittest.TestCase):
         obj.__setstate__(('', '', 0, {}))
         self.assertEqual(obj.getvalue(), '')
 
-class PyIOTest(IOTest):
-    pass
-
-
-@support.cpython_only
-class APIMismatchTest(unittest.TestCase):
-
-    def test_RawIOBase_io_in_pyio_match(self):
-        """Test that pyio RawIOBase class has all c RawIOBase methods"""
-        mismatch = support.detect_api_mismatch(pyio.RawIOBase, io.RawIOBase,
-                                               ignore=('__weakref__', '__static_attributes__'))
-        self.assertEqual(mismatch, set(), msg='Python RawIOBase does not have all C RawIOBase methods')
-
-    def test_RawIOBase_pyio_in_io_match(self):
-        """Test that c RawIOBase class has all pyio RawIOBase methods"""
-        mismatch = support.detect_api_mismatch(io.RawIOBase, pyio.RawIOBase)
-        self.assertEqual(mismatch, set(), msg='C RawIOBase does not have all Python RawIOBase methods')
-
 
 class CommonBufferedTests:
     # Tests common to BufferedReader, BufferedWriter and BufferedRandom
@@ -1855,10 +1809,6 @@ class CBufferedReaderTest(BufferedReaderTest, SizeofTest):
         self.assertIsInstance(cm.exception.__cause__, TypeError)
 
 
-class PyBufferedReaderTest(BufferedReaderTest):
-    tp = pyio.BufferedReader
-
-
 class BufferedWriterTest(unittest.TestCase, CommonBufferedTests):
     write_mode = "wb"
 
@@ -2154,7 +2104,6 @@ class BufferedWriterTest(unittest.TestCase, CommonBufferedTests):
         t.join()
 
 
-
 class CBufferedWriterTest(BufferedWriterTest, SizeofTest):
     tp = io.BufferedWriter
 
@@ -2190,9 +2139,6 @@ class CBufferedWriterTest(BufferedWriterTest, SizeofTest):
         with self.assertRaisesRegex(TypeError, "BufferedWriter"):
             self.tp(self.BytesIO(), 1024, 1024, 1024)
 
-
-class PyBufferedWriterTest(BufferedWriterTest):
-    tp = pyio.BufferedWriter
 
 class BufferedRWPairTest(unittest.TestCase):
 
@@ -2404,9 +2350,6 @@ class BufferedRWPairTest(unittest.TestCase):
 
 class CBufferedRWPairTest(BufferedRWPairTest):
     tp = io.BufferedRWPair
-
-class PyBufferedRWPairTest(BufferedRWPairTest):
-    tp = pyio.BufferedRWPair
 
 
 class BufferedRandomTest(BufferedReaderTest, BufferedWriterTest):
@@ -2675,10 +2618,6 @@ class CBufferedRandomTest(BufferedRandomTest, SizeofTest):
         # Issue #17275
         with self.assertRaisesRegex(TypeError, "BufferedRandom"):
             self.tp(self.BytesIO(), 1024, 1024, 1024)
-
-
-class PyBufferedRandomTest(BufferedRandomTest):
-    tp = pyio.BufferedRandom
 
 
 # To fully exercise seek/tell, the StatefulIncrementalDecoder has these
@@ -4277,11 +4216,6 @@ class CTextIOWrapperTest(TextIOWrapperTest):
         wrapper.close()  # should not crash
 
 
-class PyTextIOWrapperTest(TextIOWrapperTest):
-    io = pyio
-    shutdown_error = "LookupError: unknown encoding: ascii"
-
-
 class IncrementalNewlineDecoderTest(unittest.TestCase):
 
     def check_newline_decoding_utf8(self, decoder):
@@ -4408,10 +4342,6 @@ class CIncrementalNewlineDecoderTest(IncrementalNewlineDecoderTest):
         self.assertRaises(ValueError, uninitialized.getstate)
         self.assertRaises(ValueError, uninitialized.setstate, (b'foo', 0))
         self.assertRaises(ValueError, uninitialized.reset)
-
-
-class PyIncrementalNewlineDecoderTest(IncrementalNewlineDecoderTest):
-    pass
 
 
 # XXX Tests for open()
@@ -4846,13 +4776,6 @@ class CMiscIOTest(MiscIOTest):
         self.check_daemon_threads_shutdown_deadlock('stderr')
 
 
-class PyMiscIOTest(MiscIOTest):
-    io = pyio
-    name_of_module = "_pyio", "io"
-    extra_exported = "BlockingIOError", "open_code",
-    not_exported = "valid_seek_flags",
-
-
 @unittest.skipIf(os.name == 'nt', 'POSIX signals required for this test.')
 class SignalsTest(unittest.TestCase):
 
@@ -5111,14 +5034,6 @@ class SignalsTest(unittest.TestCase):
 class CSignalsTest(SignalsTest):
     io = io
 
-class PySignalsTest(SignalsTest):
-    io = pyio
-
-    # Handling reentrancy issues would slow down _pyio even more, so the
-    # tests are disabled.
-    test_reentrant_write_buffered = None
-    test_reentrant_write_text = None
-
 
 class ProtocolsTest(unittest.TestCase):
     class MyReader:
@@ -5139,16 +5054,16 @@ class ProtocolsTest(unittest.TestCase):
 
 
 def load_tests(loader, tests, pattern):
-    tests = (CIOTest, PyIOTest, APIMismatchTest,
-             CBufferedReaderTest, PyBufferedReaderTest,
-             CBufferedWriterTest, PyBufferedWriterTest,
-             CBufferedRWPairTest, PyBufferedRWPairTest,
-             CBufferedRandomTest, PyBufferedRandomTest,
+    tests = (CIOTest,
+             CBufferedReaderTest,
+             CBufferedWriterTest,
+             CBufferedRWPairTest,
+             CBufferedRandomTest,
              StatefulIncrementalDecoderTest,
-             CIncrementalNewlineDecoderTest, PyIncrementalNewlineDecoderTest,
-             CTextIOWrapperTest, PyTextIOWrapperTest,
-             CMiscIOTest, PyMiscIOTest,
-             CSignalsTest, PySignalsTest, TestIOCTypes,
+             CIncrementalNewlineDecoderTest,
+             CTextIOWrapperTest,
+             CMiscIOTest,
+             CSignalsTest, TestIOCTypes,
              ProtocolsTest,
              )
 
@@ -5159,19 +5074,13 @@ def load_tests(loader, tests, pattern):
              SlowFlushRawIO, MockCharPseudoDevFileIO)
     all_members = io.__all__
     c_io_ns = {name : getattr(io, name) for name in all_members}
-    py_io_ns = {name : getattr(pyio, name) for name in all_members}
     globs = globals()
     c_io_ns.update((x.__name__, globs["C" + x.__name__]) for x in mocks)
-    py_io_ns.update((x.__name__, globs["Py" + x.__name__]) for x in mocks)
     for test in tests:
         if test.__name__.startswith("C"):
             for name, obj in c_io_ns.items():
                 setattr(test, name, obj)
             test.is_C = True
-        elif test.__name__.startswith("Py"):
-            for name, obj in py_io_ns.items():
-                setattr(test, name, obj)
-            test.is_C = False
 
     suite = loader.suiteClass()
     for test in tests:

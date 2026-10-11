@@ -196,9 +196,6 @@ class UTF8ModeTests(unittest.TestCase):
     def test_io_encoding(self):
         self.check_io_encoding('io')
 
-    def test_pyio_encoding(self):
-        self.check_io_encoding('_pyio')
-
     def test_locale_getpreferredencoding(self):
         code = 'import locale; print(locale.getpreferredencoding(False), locale.getpreferredencoding(True))'
         out = self.get_output('-X', 'utf8', '-c', code)
