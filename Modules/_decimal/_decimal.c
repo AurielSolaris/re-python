@@ -48,6 +48,7 @@
 #endif
 
 #include <ctype.h>                // isascii()
+#include <locale.h>               // localeconv()
 #include <stdlib.h>
 
 #include "docstrings.h"
@@ -94,9 +95,6 @@ typedef struct {
 
     /* Convert rationals for comparison */
     PyObject *Rational;
-
-    /* Invariant: NULL or pointer to _pydecimal.Decimal */
-    PyObject *PyDecimal;
 
     PyObject *SignalTuple;
 
@@ -3492,44 +3490,741 @@ dict_get_item_string(PyObject *dict, const char *key, PyObject **valueobj, const
 }
 
 /*
- * Fallback _pydecimal formatting for new format specifiers that mpdecimal does
- * not yet support. As documented, libmpdec follows the PEP-3101 format language:
- * https://www.bytereef.org/mpdecimal/doc/libmpdec/assign-convert.html#to-string
+ * Formatting for the format specifiers that mpd_parse_fmt_str() rejects:
+ * '#' (alternate form), '_' as thousands separator, separators in the
+ * fractional part ('.3_f'), 'z' combined with other options, and so on.
+ *
+ * This is a C port of the PEP 3101 code that used to live in _pydecimal
+ * (Decimal.__format__, _parse_format_specifier, _format_number,
+ * _insert_thousands_sep and _format_align).  The output must stay identical
+ * to that code, which is the reference implementation of the format
+ * language for Decimal.  Lib/test/_pydecimal.py keeps it for the tests.
  */
-static PyObject *
-pydec_format(PyObject *dec, PyObject *context, PyObject *fmt, decimal_state *state)
-{
-    PyObject *result;
-    PyObject *pydec;
-    PyObject *u;
 
-    if (state->PyDecimal == NULL) {
-        state->PyDecimal = PyImport_ImportModuleAttrString("_pydecimal", "Decimal");
-        if (state->PyDecimal == NULL) {
-            return NULL;
+typedef struct {
+    Py_UCS4 fill;
+    Py_UCS4 align;          /* '<', '>', '=' or '^' */
+    Py_UCS4 sign;           /* '-', '+' or ' ' */
+    int no_neg_0;           /* 'z' */
+    int alt;                /* '#' */
+    int zeropad;            /* '0' */
+    int locale;             /* type was 'n' */
+    int width_too_large;    /* minwidth exceeds MPD_MAX_PREC */
+    int prec_too_large;     /* prec exceeds MPD_MAX_PREC (clamped) */
+    mpd_ssize_t minwidth;
+    Py_UCS4 thousands_sep;  /* 0, ',' or '_' */
+    mpd_ssize_t prec;       /* -1 if absent */
+    Py_UCS4 frac_sep;       /* 0, ',' or '_' */
+    Py_UCS4 type;           /* 0 (absent), 'e', 'E', 'f', 'F', 'g', 'G' or '%' */
+} decfmt_spec;
+
+/* Parse a run of decimal digits.  Like \d in the re module, this accepts
+   any Unicode decimal digit.  Values above MPD_MAX_PREC set *too_large and
+   are clamped to MPD_MAX_PREC.  Return the number of digits consumed. */
+static Py_ssize_t
+decfmt_digits(PyObject *fmt, Py_ssize_t pos, mpd_ssize_t *value,
+              int *too_large)
+{
+    Py_ssize_t len = PyUnicode_GET_LENGTH(fmt);
+    Py_ssize_t start = pos;
+    mpd_ssize_t v = 0;
+
+    for (; pos < len; pos++) {
+        int d = Py_UNICODE_TODECIMAL(PyUnicode_READ_CHAR(fmt, pos));
+        if (d < 0) {
+            break;
+        }
+        if (*too_large || v > (MPD_MAX_PREC - d) / 10) {
+            *too_large = 1;
+            v = MPD_MAX_PREC;
+        }
+        else {
+            v = v * 10 + d;
         }
     }
 
-    u = dec_str(dec);
-    if (u == NULL) {
+    *value = v;
+    return pos - start;
+}
+
+#define DECFMT_IS_ALIGN(c) ((c) == '<' || (c) == '>' || (c) == '=' || (c) == '^')
+#define DECFMT_IS_SEP(c) ((c) == ',' || (c) == '_')
+
+/* Port of _pydecimal._parse_format_specifier().  The grammar is
+
+     [[fill]align][sign][z][#][0][minimumwidth][,|_][.[precision][,|_]][type]
+
+   Return -1 if the specifier is invalid (no exception is set). */
+static int
+decfmt_parse(PyObject *fmt, decfmt_spec *spec)
+{
+    Py_ssize_t len = PyUnicode_GET_LENGTH(fmt);
+    Py_ssize_t pos = 0;
+    int have_align = 0;
+    Py_UCS4 c;
+
+    memset(spec, 0, sizeof *spec);
+    spec->fill = ' ';
+    spec->align = '>';
+    spec->sign = '-';
+    spec->prec = -1;
+
+#define PEEK(i) PyUnicode_READ_CHAR(fmt, pos + (i))
+
+    if (len - pos >= 2 && DECFMT_IS_ALIGN(PEEK(1))) {
+        spec->fill = PEEK(0);
+        spec->align = PEEK(1);
+        have_align = 1;
+        pos += 2;
+    }
+    else if (pos < len && DECFMT_IS_ALIGN(PEEK(0))) {
+        spec->align = PEEK(0);
+        have_align = 1;
+        pos += 1;
+    }
+
+    if (pos < len && ((c = PEEK(0)) == '-' || c == '+' || c == ' ')) {
+        spec->sign = c;
+        pos++;
+    }
+    if (pos < len && PEEK(0) == 'z') {
+        spec->no_neg_0 = 1;
+        pos++;
+    }
+    if (pos < len && PEEK(0) == '#') {
+        spec->alt = 1;
+        pos++;
+    }
+    if (pos < len && PEEK(0) == '0') {
+        spec->zeropad = 1;
+        pos++;
+    }
+    pos += decfmt_digits(fmt, pos, &spec->minwidth, &spec->width_too_large);
+
+    if (pos < len && DECFMT_IS_SEP(PEEK(0))) {
+        spec->thousands_sep = PEEK(0);
+        pos++;
+    }
+
+    /* '.' must be followed by a digit or a separator */
+    if (len - pos >= 2 && PEEK(0) == '.' &&
+        (Py_UNICODE_ISDECIMAL(PEEK(1)) || DECFMT_IS_SEP(PEEK(1)))) {
+        mpd_ssize_t prec;
+        pos++;
+        Py_ssize_t n = decfmt_digits(fmt, pos, &prec, &spec->prec_too_large);
+        if (n > 0) {
+            spec->prec = prec;
+            pos += n;
+        }
+        if (pos < len && DECFMT_IS_SEP(PEEK(0))) {
+            spec->frac_sep = PEEK(0);
+            pos++;
+        }
+    }
+
+    if (pos < len) {
+        switch ((c = PEEK(0))) {
+        case 'e': case 'E': case 'f': case 'F': case 'g': case 'G':
+        case 'n': case '%':
+            spec->type = c;
+            pos++;
+            break;
+        }
+    }
+
+#undef PEEK
+
+    if (pos != len) {
+        return -1;
+    }
+
+    /* zero padding: the fill and alignment fields must be absent */
+    if (spec->zeropad && have_align) {
+        return -1;
+    }
+
+    /* for 'g', 'G', 'n' and no type, a precision of 0 means 1 */
+    if (spec->prec == 0 &&
+        (spec->type == 0 || spec->type == 'g' || spec->type == 'G' ||
+         spec->type == 'n')) {
+        spec->prec = 1;
+    }
+
+    /* apart from the separators, 'n' behaves just like 'g' */
+    if (spec->type == 'n') {
+        if (spec->thousands_sep) {
+            return -1;
+        }
+        spec->type = 'g';
+        spec->locale = 1;
+    }
+
+    return 0;
+}
+
+/* Decode a decimal_point or thousands_sep string from localeconv(). */
+static PyObject *
+decfmt_locale_str(const char *s)
+{
+    size_t n = strlen(s);
+    if (n > 1 || (n == 1 && !isascii((unsigned char)s[0]))) {
+        PyObject *utf8 = dotsep_as_utf8(s);
+        if (utf8 == NULL) {
+            return NULL;
+        }
+        PyObject *res = PyUnicode_FromStringAndSize(PyBytes_AS_STRING(utf8),
+                                                    PyBytes_GET_SIZE(utf8));
+        Py_DECREF(utf8);
+        return res;
+    }
+    return PyUnicode_FromString(s);
+}
+
+/* Get decimal_point, thousands_sep and grouping for the 'n' type, from
+   localeconv() and the optional override dict.  This matches what
+   dec_format() does for the specifiers that libmpdec handles. */
+static int
+decfmt_get_locale(PyObject *override, PyObject **dot, PyObject **sep,
+                  PyObject **grouping)
+{
+    PyObject *dotobj = NULL, *sepobj = NULL, *grpobj = NULL;
+    struct lconv *lc = localeconv();
+    mpd_spec_t spec;
+    int ret = -1;
+
+    spec.dot = lc->decimal_point;
+    spec.sep = lc->thousands_sep;
+    spec.grouping = lc->grouping;
+
+    if (override) {
+        if (dict_get_item_string(override, "decimal_point", &dotobj, &spec.dot) ||
+            dict_get_item_string(override, "thousands_sep", &sepobj, &spec.sep) ||
+            dict_get_item_string(override, "grouping", &grpobj, &spec.grouping))
+        {
+            goto finish;
+        }
+        if (mpd_validate_lconv(&spec) < 0) {
+            PyErr_SetString(PyExc_ValueError,
+                "invalid override dict");
+            goto finish;
+        }
+    }
+
+    /* override values are already UTF-8 */
+    *dot = dotobj ? PyUnicode_FromString(spec.dot)
+                  : decfmt_locale_str(spec.dot);
+    if (*dot == NULL) {
+        goto finish;
+    }
+    *sep = sepobj ? PyUnicode_FromString(spec.sep)
+                  : decfmt_locale_str(spec.sep);
+    if (*sep == NULL) {
+        Py_CLEAR(*dot);
+        goto finish;
+    }
+    *grouping = PyBytes_FromString(spec.grouping);
+    if (*grouping == NULL) {
+        Py_CLEAR(*dot);
+        Py_CLEAR(*sep);
+        goto finish;
+    }
+    ret = 0;
+
+finish:
+    Py_XDECREF(dotobj);
+    Py_XDECREF(sepobj);
+    Py_XDECREF(grpobj);
+    return ret;
+}
+
+static int
+decfmt_write_repeat(PyUnicodeWriter *w, Py_UCS4 c, Py_ssize_t n)
+{
+    for (; n > 0; n--) {
+        if (PyUnicodeWriter_WriteChar(w, c) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+typedef struct {
+    Py_ssize_t zeros;   /* leading zeros */
+    Py_ssize_t take;    /* digits taken from the digit string */
+} decfmt_group;
+
+/* Port of _pydecimal._insert_thousands_sep().  'grouping' is a localeconv()
+   style string: each char is a group length; the string either ends with
+   NUL (repeat the last group length) or with CHAR_MAX (no more grouping).
+   The result is padded on the left with zeros to at least min_width
+   characters; an extra '0' avoids a leading separator. */
+static PyObject *
+decfmt_group_digits(const char *digits, Py_ssize_t ndigits,
+                    const char *grouping, PyObject *sep, Py_ssize_t min_width)
+{
+    Py_ssize_t seplen = PyUnicode_GET_LENGTH(sep);
+    Py_ssize_t rem = ndigits;
+    decfmt_group *groups = NULL;
+    Py_ssize_t ngroups = 0, allocated = 0;
+    const char *g = grouping;
+    PyUnicodeWriter *w = NULL;
+    PyObject *res = NULL;
+    Py_ssize_t l;
+    int exhausted = 0;
+
+    for (;;) {
+        /* next group length, as _pydecimal._group_lengths() yields it */
+        if (*g == '\0' || *g == CHAR_MAX) {
+            if (*g == CHAR_MAX || g == grouping) {
+                exhausted = 1;
+                break;
+            }
+            l = (Py_ssize_t)g[-1];  /* repeat the last group length */
+        }
+        else {
+            l = (Py_ssize_t)*g++;
+        }
+        if (l <= 0) {
+            PyErr_SetString(PyExc_ValueError, "invalid format string");
+            goto finish;
+        }
+
+        /* at least 1 digit to the left of a separator */
+        l = Py_MIN(Py_MAX(Py_MAX(rem, min_width), 1), l);
+        if (ngroups == allocated) {
+            Py_ssize_t newsize = allocated ? allocated * 2 : 16;
+            decfmt_group *tmp = PyMem_Resize(groups, decfmt_group, newsize);
+            if (tmp == NULL) {
+                PyErr_NoMemory();
+                goto finish;
+            }
+            groups = tmp;
+            allocated = newsize;
+        }
+        groups[ngroups].take = Py_MIN(l, rem);
+        groups[ngroups].zeros = l - groups[ngroups].take;
+        ngroups++;
+        rem -= groups[ngroups-1].take;
+        min_width -= l;
+        if (rem == 0 && min_width <= 0) {
+            break;
+        }
+        min_width -= seplen;
+    }
+
+    w = PyUnicodeWriter_Create(0);
+    if (w == NULL) {
+        goto finish;
+    }
+
+    if (exhausted) {
+        /* the remaining digits form a single group */
+        l = Py_MAX(Py_MAX(rem, min_width), 1);
+        if (decfmt_write_repeat(w, '0', l - rem) < 0 ||
+            PyUnicodeWriter_WriteUTF8(w, digits, rem) < 0) {
+            goto finish;
+        }
+        if (ngroups > 0 && PyUnicodeWriter_WriteStr(w, sep) < 0) {
+            goto finish;
+        }
+    }
+
+    const char *p = digits + rem;
+    for (Py_ssize_t i = ngroups - 1; i >= 0; i--) {
+        if (decfmt_write_repeat(w, '0', groups[i].zeros) < 0 ||
+            PyUnicodeWriter_WriteUTF8(w, p, groups[i].take) < 0) {
+            goto finish;
+        }
+        p += groups[i].take;
+        if (i > 0 && PyUnicodeWriter_WriteStr(w, sep) < 0) {
+            goto finish;
+        }
+    }
+
+    res = PyUnicodeWriter_Finish(w);
+    w = NULL;
+
+finish:
+    if (w) {
+        PyUnicodeWriter_Discard(w);
+    }
+    PyMem_Free(groups);
+    return res;
+}
+
+/* Port of _pydecimal._format_align(). */
+static PyObject *
+decfmt_align(const decfmt_spec *spec, Py_UCS4 sign, PyObject *body)
+{
+    Py_ssize_t len = (sign ? 1 : 0) + PyUnicode_GET_LENGTH(body);
+    Py_ssize_t padding = spec->minwidth > len ? spec->minwidth - len : 0;
+    Py_ssize_t left, right;
+    PyUnicodeWriter *w;
+
+    switch (spec->align) {
+    case '<': left = 0; right = padding; break;
+    case '^': left = padding / 2; right = padding - left; break;
+    default: left = padding; right = 0; break;  /* '>' and '=' */
+    }
+
+    w = PyUnicodeWriter_Create(len + padding);
+    if (w == NULL) {
+        return NULL;
+    }
+    if (spec->align != '=' && decfmt_write_repeat(w, spec->fill, left) < 0) {
+        goto error;
+    }
+    if (sign && PyUnicodeWriter_WriteChar(w, sign) < 0) {
+        goto error;
+    }
+    if (spec->align == '=' && decfmt_write_repeat(w, spec->fill, left) < 0) {
+        goto error;
+    }
+    if (PyUnicodeWriter_WriteStr(w, body) < 0 ||
+        decfmt_write_repeat(w, spec->fill, right) < 0) {
+        goto error;
+    }
+    return PyUnicodeWriter_Finish(w);
+
+error:
+    PyUnicodeWriter_Discard(w);
+    return NULL;
+}
+
+/* _pydecimal's Decimal._round(): round a nonzero number to 'places'
+   significant digits.  Zeros are left unchanged. */
+static void
+decfmt_round(mpd_t *x, mpd_ssize_t places, const mpd_context_t *ctx,
+             uint32_t *status)
+{
+    if (mpd_iszero(x)) {
+        return;
+    }
+    mpd_ssize_t adj = mpd_adjexp(x);
+    mpd_qrescale(x, x, adj + 1 - places, ctx, status);
+    /* e.g. 99.97 rounded to 3 digits gains a digit: rescale again */
+    if (!(*status & MPD_Errors) && mpd_adjexp(x) != adj) {
+        mpd_qrescale(x, x, mpd_adjexp(x) + 1 - places, ctx, status);
+    }
+}
+
+/* Port of _pydecimal's Decimal.__format__() for a finite number. */
+static PyObject *
+decfmt_finite(PyObject *dec, PyObject *context, const decfmt_spec *spec,
+              PyObject *dot, PyObject *sep, const char *grouping)
+{
+    PyObject *result = NULL;
+    PyObject *body = NULL;
+    PyObject *intstr = NULL;
+    PyUnicodeWriter *w = NULL;
+    mpd_context_t maxctx;
+    uint32_t status = 0;
+    char *coeff = NULL;
+    char *intdigits = NULL;
+    char *fracdigits = NULL;
+    Py_UCS4 type = spec->type;
+    Py_UCS4 sign;
+    int64_t ndigits, exp, leftdigits, dotplace;
+    int64_t nintdigits, fraczeros, fracstart;
+    Py_ssize_t nfrac;
+    mpd_t *x;
+
+    /* no type: 'g' or 'G', depending on context.capitals */
+    if (type == 0) {
+        type = CtxCaps(context) ? 'G' : 'g';
+    }
+
+    x = mpd_qncopy(MPD(dec));
+    if (x == NULL) {
+        PyErr_NoMemory();
         return NULL;
     }
 
-    pydec = PyObject_CallOneArg(state->PyDecimal, u);
-    Py_DECREF(u);
-    if (pydec == NULL) {
-        return NULL;
+    if (type == '%') {
+        x->exp += 2;
     }
 
-    result = PyObject_CallMethod(pydec, "__format__", "(OO)", fmt, context);
-    Py_DECREF(pydec);
+    /* round if necessary, taking the rounding mode from the context;
+       like _pydecimal, this is quiet and ignores the context limits */
+    /* A clamped precision still means "no rounding" for 'g' and 'G'.  For
+       the other types _pydecimal would build a string of that many digits. */
+    if (spec->prec_too_large && type != 'g' && type != 'G') {
+        PyErr_SetString(PyExc_ValueError,
+            "format specification exceeds internal limits of _decimal");
+        goto finish;
+    }
 
-    if (result == NULL && PyErr_ExceptionMatches(PyExc_ValueError)) {
-        /* Do not confuse users with the _pydecimal exception */
-        PyErr_Clear();
+    mpd_maxcontext(&maxctx);
+    maxctx.round = CTX(context)->round;
+    if (spec->prec >= 0) {
+        switch (type) {
+        case 'e': case 'E':
+            decfmt_round(x, spec->prec + 1, &maxctx, &status);
+            break;
+        case 'f': case 'F': case '%':
+            mpd_qrescale(x, x, -spec->prec, &maxctx, &status);
+            break;
+        default:  /* 'g', 'G' */
+            if (x->digits > spec->prec) {
+                decfmt_round(x, spec->prec, &maxctx, &status);
+            }
+            break;
+        }
+    }
+    /* zeros with a positive exponent can't be represented in fixed
+       point; rescale them to 0e0 */
+    if (!(status & MPD_Errors) && mpd_iszero(x) && x->exp > 0 &&
+        (type == 'f' || type == 'F' || type == '%')) {
+        mpd_qrescale(x, x, 0, &maxctx, &status);
+    }
+    if (status & MPD_Errors) {
+        if (status & MPD_Malloc_error) {
+            PyErr_NoMemory();
+        }
+        else {
+            PyErr_SetString(PyExc_ValueError,
+                "format specification exceeds internal limits of _decimal");
+        }
+        goto finish;
+    }
+
+    if (mpd_iszero(x) && spec->no_neg_0) {
+        sign = 0;
+    }
+    else {
+        sign = mpd_isnegative(x) ? '-' : 0;
+    }
+    if (!sign && (spec->sign == '+' || spec->sign == ' ')) {
+        sign = spec->sign;
+    }
+
+    /* the coefficient as a digit string */
+    exp = x->exp;
+    ndigits = x->digits;
+    x->exp = 0;
+    mpd_set_positive(x);
+    coeff = mpd_to_sci(x, 0);
+    if (coeff == NULL) {
+        PyErr_NoMemory();
+        goto finish;
+    }
+
+    /* figure out the placement of the decimal point */
+    leftdigits = exp + ndigits;
+    if (type == 'e' || type == 'E') {
+        if (mpd_iszero(x) && spec->prec >= 0) {
+            dotplace = 1 - spec->prec;
+        }
+        else {
+            dotplace = 1;
+        }
+    }
+    else if (type == 'f' || type == 'F' || type == '%') {
+        dotplace = leftdigits;
+    }
+    else if (exp <= 0 && leftdigits > -6) {
+        dotplace = leftdigits;
+    }
+    else {
+        dotplace = 1;
+    }
+
+    /* digits before and after the decimal point */
+    if (dotplace < 0) {
+        nintdigits = 0;         /* intpart = '0' */
+        fraczeros = -dotplace;
+        fracstart = 0;
+    }
+    else if (dotplace > ndigits) {
+        nintdigits = dotplace;  /* coefficient + zeros */
+        fraczeros = 0;
+        fracstart = ndigits;
+    }
+    else {
+        nintdigits = dotplace;
+        fraczeros = 0;
+        fracstart = dotplace;
+    }
+    exp = leftdigits - dotplace;
+
+    if (nintdigits > PY_SSIZE_T_MAX / 4 || fraczeros > PY_SSIZE_T_MAX / 4) {
+        PyErr_NoMemory();
+        goto finish;
+    }
+    nfrac = (Py_ssize_t)(fraczeros + ndigits - fracstart);
+
+    /* the part after the integer digits */
+    w = PyUnicodeWriter_Create(0);
+    if (w == NULL) {
+        goto finish;
+    }
+    if (nfrac > 0 || spec->alt) {
+        if (PyUnicodeWriter_WriteStr(w, dot) < 0) {
+            goto finish;
+        }
+    }
+    if (nfrac > 0) {
+        /* the fractional digits: zeros, then the rest of the coefficient */
+        fracdigits = PyMem_Malloc((size_t)nfrac);
+        if (fracdigits == NULL) {
+            PyErr_NoMemory();
+            goto finish;
+        }
+        memset(fracdigits, '0', (size_t)fraczeros);
+        memcpy(fracdigits + fraczeros, coeff + fracstart,
+               (size_t)(ndigits - fracstart));
+        /* with a separator, in groups of three from the decimal point */
+        Py_ssize_t step = spec->frac_sep ? 3 : nfrac;
+        for (Py_ssize_t i = 0; i < nfrac; i += step) {
+            if (i > 0 && PyUnicodeWriter_WriteChar(w, spec->frac_sep) < 0) {
+                goto finish;
+            }
+            if (PyUnicodeWriter_WriteUTF8(w, fracdigits + i,
+                                          Py_MIN(step, nfrac - i)) < 0) {
+                goto finish;
+            }
+        }
+    }
+    if (exp != 0 || type == 'e' || type == 'E') {
+        char buf[32];
+        char echar = (type == 'E' || type == 'G') ? 'E' : 'e';
+        int n = PyOS_snprintf(buf, sizeof buf, "%c%+" PRId64, echar, exp);
+        if (PyUnicodeWriter_WriteUTF8(w, buf, n) < 0) {
+            goto finish;
+        }
+    }
+    if (type == '%' && PyUnicodeWriter_WriteChar(w, '%') < 0) {
+        goto finish;
+    }
+    body = PyUnicodeWriter_Finish(w);
+    w = NULL;
+    if (body == NULL) {
+        goto finish;
+    }
+
+    /* the integer digits */
+    if (nintdigits == 0) {
+        intdigits = PyMem_Malloc(2);
+        if (intdigits == NULL) {
+            PyErr_NoMemory();
+            goto finish;
+        }
+        strcpy(intdigits, "0");
+        nintdigits = 1;
+    }
+    else {
+        intdigits = PyMem_Malloc((size_t)nintdigits + 1);
+        if (intdigits == NULL) {
+            PyErr_NoMemory();
+            goto finish;
+        }
+        int64_t ncopy = Py_MIN(nintdigits, ndigits);
+        memcpy(intdigits, coeff, (size_t)ncopy);
+        memset(intdigits + ncopy, '0', (size_t)(nintdigits - ncopy));
+        intdigits[nintdigits] = '\0';
+    }
+
+    Py_ssize_t min_width = 0;
+    if (spec->zeropad) {
+        min_width = (Py_ssize_t)spec->minwidth - PyUnicode_GET_LENGTH(body)
+                    - (sign ? 1 : 0);
+    }
+    intstr = decfmt_group_digits(intdigits, (Py_ssize_t)nintdigits,
+                                 grouping, sep, min_width);
+    if (intstr == NULL) {
+        goto finish;
+    }
+
+    Py_SETREF(body, PyUnicode_Concat(intstr, body));
+    if (body == NULL) {
+        goto finish;
+    }
+    result = decfmt_align(spec, sign, body);
+
+finish:
+    if (w) {
+        PyUnicodeWriter_Discard(w);
+    }
+    Py_XDECREF(body);
+    Py_XDECREF(intstr);
+    PyMem_Free(intdigits);
+    PyMem_Free(fracdigits);
+    if (coeff) {
+        mpd_free(coeff);
+    }
+    mpd_del(x);
+    return result;
+}
+
+/* Format a decimal with a specifier that libmpdec does not support. */
+static PyObject *
+dec_format_ext(PyObject *dec, PyObject *context, PyObject *fmt,
+               PyObject *override)
+{
+    PyObject *result = NULL;
+    PyObject *dot = NULL;
+    PyObject *sep = NULL;
+    PyObject *grouping = NULL;
+    decfmt_spec spec;
+
+    if (override && !PyDict_Check(override)) {
+        PyErr_SetString(PyExc_TypeError,
+            "optional argument must be a dict");
+        return NULL;
+    }
+    if (decfmt_parse(fmt, &spec) < 0) {
         PyErr_SetString(PyExc_ValueError, "invalid format string");
+        return NULL;
     }
 
+    if (spec.locale) {
+        if (decfmt_get_locale(override, &dot, &sep, &grouping) < 0) {
+            return NULL;
+        }
+    }
+    else {
+        const char s[2] = {(char)spec.thousands_sep, '\0'};
+        dot = PyUnicode_FromString(".");
+        sep = PyUnicode_FromString(s);
+        grouping = PyBytes_FromString("\3");
+        if (dot == NULL || sep == NULL || grouping == NULL) {
+            goto finish;
+        }
+    }
+
+    if (spec.width_too_large) {
+        PyErr_SetString(PyExc_ValueError,
+            "format specification exceeds internal limits of _decimal");
+        goto finish;
+    }
+
+    if (mpd_isspecial(MPD(dec))) {
+        /* special values don't care about the type or precision */
+        Py_UCS4 sign = mpd_isnegative(MPD(dec)) ? '-' :
+                       (spec.sign == '+' || spec.sign == ' ') ? spec.sign : 0;
+        char *s = mpd_to_sci(MPD(dec), 0);
+        if (s == NULL) {
+            PyErr_NoMemory();
+            goto finish;
+        }
+        PyObject *body = PyUnicode_FromFormat("%s%s",
+            s[0] == '-' ? s + 1 : s, spec.type == '%' ? "%" : "");
+        mpd_free(s);
+        if (body == NULL) {
+            goto finish;
+        }
+        result = decfmt_align(&spec, sign, body);
+        Py_DECREF(body);
+    }
+    else {
+        result = decfmt_finite(dec, context, &spec, dot, sep,
+                               PyBytes_AS_STRING(grouping));
+    }
+
+finish:
+    Py_XDECREF(dot);
+    Py_XDECREF(sep);
+    Py_XDECREF(grouping);
     return result;
 }
 
@@ -3589,12 +4284,15 @@ dec_format(PyObject *dec, PyObject *args)
         return NULL;
     }
 
-    if (!mpd_parse_fmt_str(&spec, fmt, CtxCaps(context))) {
+    /* An embedded NUL would truncate the specifier for libmpdec, so such
+       specifiers are left to dec_format_ext(), which parses the whole str. */
+    if (strlen(fmt) != (size_t)size ||
+        !mpd_parse_fmt_str(&spec, fmt, CtxCaps(context))) {
         if (replace_fillchar) {
             PyMem_Free(fmt);
         }
 
-        return pydec_format(dec, context, fmtarg, state);
+        return dec_format_ext(dec, context, fmtarg, override);
     }
 
     if (replace_fillchar) {
@@ -6084,9 +6782,6 @@ _decimal_exec(PyObject *m)
     Py_CLEAR(collections_abc);
     Py_CLEAR(MutableMapping);
 
-    /* For format specifiers not yet supported by libmpdec */
-    state->PyDecimal = NULL;
-
     /* Add types to the module */
     CHECK_INT(PyModule_AddType(m, state->PyDec_Type));
     CHECK_INT(PyModule_AddType(m, state->PyDecContext_Type));
@@ -6302,7 +6997,6 @@ decimal_clear(PyObject *module)
     Py_CLEAR(state->extended_context_template);
     Py_CLEAR(state->Rational);
     Py_CLEAR(state->SignalTuple);
-    Py_CLEAR(state->PyDecimal);
 
     if (state->signal_map != NULL) {
         for (DecCondMap *cm = state->signal_map; cm->name != NULL; cm++) {

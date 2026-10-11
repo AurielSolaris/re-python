@@ -274,7 +274,6 @@ Doc/c-api/stable.rst          @encukou
 **/*cjkcodecs*                @corona10
 
 # macOS
-/Mac/                         @python/macos-team
 **/*osx_support*              @python/macos-team
 
 # pathlib
@@ -304,7 +303,6 @@ Lib/concurrent/futures/interpreter.py  @ericsnowcurrently
 **/*android*                  @mhsmith @freakboy3742
 
 # Apple
-/Apple                        @freakboy3742
 
 # iOS (but not termios)
 **/iOS*                       @freakboy3742
@@ -315,12 +313,6 @@ Lib/concurrent/futures/interpreter.py  @ericsnowcurrently
 **/*-ios*                     @freakboy3742
 
 # WebAssembly
-/Platforms/emscripten         @freakboy3742
-/Tools/wasm/README.md         @brettcannon @freakboy3742
-/Tools/wasm/wasi-env          @brettcannon
-/Tools/wasm/wasi_build.py     @brettcannon
-/Tools/wasm/emscripten        @freakboy3742
-/Tools/wasm/wasi              @brettcannon
 
 # SBOM
 /Misc/externals.spdx.json     @sethmlarson
