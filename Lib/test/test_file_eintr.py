@@ -22,7 +22,6 @@ if not support.has_subprocess_support:
 
 # Test import all of the things we're about to try testing up front.
 import _io    # noqa: F401
-import _pyio  # noqa: F401
 
 @unittest.skipUnless(os.name == 'posix', 'tests requires a posix system.')
 class TestFileIOSignalInterrupt:
@@ -186,9 +185,6 @@ class TestFileIOSignalInterrupt:
 class CTestFileIOSignalInterrupt(TestFileIOSignalInterrupt, unittest.TestCase):
     modname = '_io'
 
-class PyTestFileIOSignalInterrupt(TestFileIOSignalInterrupt, unittest.TestCase):
-    modname = '_pyio'
-
 
 class TestBufferedIOSignalInterrupt(TestFileIOSignalInterrupt):
     def _generate_infile_setup_code(self):
@@ -207,9 +203,6 @@ class TestBufferedIOSignalInterrupt(TestFileIOSignalInterrupt):
 
 class CTestBufferedIOSignalInterrupt(TestBufferedIOSignalInterrupt, unittest.TestCase):
     modname = '_io'
-
-class PyTestBufferedIOSignalInterrupt(TestBufferedIOSignalInterrupt, unittest.TestCase):
-    modname = '_pyio'
 
 
 class TestTextIOSignalInterrupt(TestFileIOSignalInterrupt):
@@ -246,9 +239,6 @@ class TestTextIOSignalInterrupt(TestFileIOSignalInterrupt):
 
 class CTestTextIOSignalInterrupt(TestTextIOSignalInterrupt, unittest.TestCase):
     modname = '_io'
-
-class PyTestTextIOSignalInterrupt(TestTextIOSignalInterrupt, unittest.TestCase):
-    modname = '_pyio'
 
 
 if __name__ == '__main__':

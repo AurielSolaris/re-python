@@ -44,14 +44,7 @@ except ModuleNotFoundError:
 
 # Needed by test_datetime
 import _strptime
-try:
-    import _pydatetime
-except ImportError:
-    _pydatetime = None
-try:
-    import _datetime
-except ImportError:
-    _datetime = None
+import _datetime
 #
 
 pickle_loads = {pickle.loads, pickle._loads}
@@ -91,9 +84,6 @@ class TestModule(unittest.TestCase):
             self.assertIn(attr, all_attrs)
 
     def test_name_cleanup(self):
-        if '_Pure' in self.__class__.__name__:
-            self.skipTest('Only run for Fast C implementation')
-
         datetime = datetime_module
         names = set(name for name in dir(datetime)
                     if not name.startswith('__') and not name.endswith('__'))
@@ -101,33 +91,6 @@ class TestModule(unittest.TestCase):
                        'datetime_CAPI', 'time', 'timedelta', 'timezone',
                        'tzinfo', 'UTC', 'sys'])
         self.assertEqual(names - allowed, set([]))
-
-    def test_divide_and_round(self):
-        if '_Fast' in self.__class__.__name__:
-            self.skipTest('Only run for Pure Python implementation')
-
-        dar = _pydatetime._divide_and_round
-
-        self.assertEqual(dar(-10, -3), 3)
-        self.assertEqual(dar(5, -2), -2)
-
-        # four cases: (2 signs of a) x (2 signs of b)
-        self.assertEqual(dar(7, 3), 2)
-        self.assertEqual(dar(-7, 3), -2)
-        self.assertEqual(dar(7, -3), -2)
-        self.assertEqual(dar(-7, -3), 2)
-
-        # ties to even - eight cases:
-        # (2 signs of a) x (2 signs of b) x (even / odd quotient)
-        self.assertEqual(dar(10, 4), 2)
-        self.assertEqual(dar(-10, 4), -2)
-        self.assertEqual(dar(10, -4), -2)
-        self.assertEqual(dar(-10, -4), 2)
-
-        self.assertEqual(dar(6, 4), 2)
-        self.assertEqual(dar(-6, 4), -2)
-        self.assertEqual(dar(6, -4), -2)
-        self.assertEqual(dar(-6, -4), 2)
 
 
 #############################################################################
@@ -6838,10 +6801,6 @@ class IranTest(ZoneInfoTest):
 @unittest.skipIf(_testcapi is None, 'need _testcapi module')
 class CapiTest(unittest.TestCase):
     def setUp(self):
-        # Since the C API is not present in the _Pure tests, skip all tests
-        if self.__class__.__name__.endswith('Pure'):
-            self.skipTest('Not relevant in pure Python')
-
         # This *must* be called, and it must be called first, so until either
         # restriction is loosened, we'll call it as part of test setup
         _testcapi.test_datetime_capi()
@@ -7271,10 +7230,6 @@ class CapiTest(unittest.TestCase):
 
 
 class ExtensionModuleTests(unittest.TestCase):
-
-    def setUp(self):
-        if self.__class__.__name__.endswith('Pure'):
-            self.skipTest('Not relevant in pure Python')
 
     @support.cpython_only
     def test_gh_120161(self):

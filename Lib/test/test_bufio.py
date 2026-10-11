@@ -2,7 +2,6 @@ import unittest
 from test.support import os_helper
 
 import io # C implementation.
-import _pyio as pyio # Python implementation.
 
 # Simple test to ensure that optimizations in the IO library deliver the
 # expected results.  For best testing, run this under a debug-build Python too
@@ -64,9 +63,6 @@ class BufferSizeTest:
 
 class CBufferSizeTest(BufferSizeTest, unittest.TestCase):
     open = io.open
-
-class PyBufferSizeTest(BufferSizeTest, unittest.TestCase):
-    open = staticmethod(pyio.open)
 
 
 if __name__ == "__main__":

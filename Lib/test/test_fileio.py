@@ -21,7 +21,6 @@ from test.support.import_helper import import_module
 from collections import UserList
 
 import _io  # C implementation of io
-import _pyio # Python implementation of io
 
 
 _strace_flags=["--trace=%file,%desc"]
@@ -504,7 +503,6 @@ class AutoFileTests:
         self.assertEqual(calls.count("read"), 2)
 
 
-
 class CAutoFileTests(AutoFileTests, unittest.TestCase):
     FileIO = _io.FileIO
     modulename = '_io'
@@ -522,11 +520,6 @@ class CAutoFileTests(AutoFileTests, unittest.TestCase):
             del self.f._finalizing
         # closing a file which is being finalized emits a ResourceWarning
         self.f._finalizing = False
-
-
-class PyAutoFileTests(AutoFileTests, unittest.TestCase):
-    FileIO = _pyio.FileIO
-    modulename = '_pyio'
 
 
 class OtherFileTests:
@@ -772,24 +765,6 @@ class COtherFileTests(OtherFileTests, unittest.TestCase):
         with _io.open_code(__file__) as f:
             actual = f.read()
         self.assertEqual(expected, actual)
-
-
-class PyOtherFileTests(OtherFileTests, unittest.TestCase):
-    FileIO = _pyio.FileIO
-    modulename = '_pyio'
-    open = _pyio.open
-
-    def test_open_code(self):
-        # Check that the default behaviour of open_code matches
-        # open("rb")
-        with self.FileIO(__file__, "rb") as f:
-            expected = f.read()
-        with check_warnings(quiet=True) as w:
-            # Always test _open_code_with_warning
-            with _pyio._open_code_with_warning(__file__) as f:
-                actual = f.read()
-            self.assertEqual(expected, actual)
-            self.assertNotEqual(w.warnings, [])
 
 
 def tearDownModule():
