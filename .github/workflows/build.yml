@@ -237,31 +237,6 @@ jobs:
     with:
       arch: ${{ matrix.arch }}
 
-  build-macos:
-    name: >-
-      macOS
-      ${{ fromJSON(matrix.free-threading) && '(free-threading)' || '' }}
-    needs: build-context
-    if: needs.build-context.outputs.run-macos == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        # macos-26 is Apple Silicon, macos-26-intel is Intel.
-        # macos-26-intel only runs tests against the GIL-enabled CPython.
-        os:
-        - macos-26
-        - macos-26-intel
-        free-threading:
-        - false
-        - true
-        exclude:
-        - os: macos-26-intel
-          free-threading: true
-    uses: ./.github/workflows/reusable-macos.yml
-    with:
-      free-threading: ${{ matrix.free-threading }}
-      os: ${{ matrix.os }}
-
   build-ubuntu:
     name: >-
       Ubuntu
@@ -370,54 +345,6 @@ jobs:
           | grep -iE '${{ matrix.ssllib.name }}.*${{ matrix.ssllib.version }}'
     - name: SSL tests
       run: ./python Lib/test/ssltests.py
-
-  build-android:
-    name: Android (${{ matrix.arch }})
-    needs: build-context
-    if: needs.build-context.outputs.run-android == 'true'
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: aarch64
-            runs-on: macos-26
-          - arch: x86_64
-            runs-on: ubuntu-26.04
-
-    runs-on: ${{ matrix.runs-on }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Build and test
-        run: ./Android/android.py ci --fast-ci ${{ matrix.arch }}-linux-android
-
-  build-ios:
-    name: iOS
-    needs: build-context
-    if: needs.build-context.outputs.run-ios == 'true'
-    timeout-minutes: 60
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Build and test
-        run: python3 Apple ci iOS --fast-ci
-
-  build-emscripten:
-    name: 'Emscripten'
-    needs: build-context
-    if: needs.build-context.outputs.run-emscripten == 'true'
-    uses: ./.github/workflows/reusable-emscripten.yml
-
-  build-wasi:
-    name: 'WASI'
-    needs: build-context
-    if: needs.build-context.outputs.run-wasi == 'true'
-    uses: ./.github/workflows/reusable-wasi.yml
 
   test-hypothesis:
     name: "Hypothesis tests on Ubuntu"
@@ -691,13 +618,9 @@ jobs:
     - check-c-api-docs
     - build-windows
     - build-windows-msi
-    - build-macos
     - build-ubuntu
     - build-ubuntu-installed
     - build-ubuntu-ssltests
-    - build-ios
-    - build-emscripten
-    - build-wasi
     - test-hypothesis
     - build-asan
     - build-san
@@ -710,8 +633,6 @@ jobs:
       uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35
       with:
         allowed-failures: >-
-          build-android,
-          build-emscripten,
           build-windows-msi,
           build-ubuntu-ssltests,
           test-hypothesis,
@@ -739,7 +660,6 @@ jobs:
             && 'cifuzz,' ||
             ''
           }}
-          ${{ !fromJSON(needs.build-context.outputs.run-macos) && 'build-macos,' || '' }}
           ${{
             !fromJSON(needs.build-context.outputs.run-ubuntu)
             && '
@@ -753,8 +673,4 @@ jobs:
             '
             || ''
           }}
-          ${{ !fromJSON(needs.build-context.outputs.run-android) && 'build-android,' || '' }}
-          ${{ !fromJSON(needs.build-context.outputs.run-ios) && 'build-ios,' || '' }}
-          ${{ !fromJSON(needs.build-context.outputs.run-emscripten) && 'build-emscripten,' || '' }}
-          ${{ !fromJSON(needs.build-context.outputs.run-wasi) && 'build-wasi,' || '' }}
         jobs: ${{ toJSON(needs) }}

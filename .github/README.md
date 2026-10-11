@@ -8,6 +8,7 @@ A fork of CPython 3.14 — maintenance-focused, with selected feature additions.
 ## Goals
 
 - Maintain a stable, controlled Python 3.14 base
+- Linux and Windows only (see Supported Platforms)
 - Track upstream CPython 3.14 security patches via automated CVE monitoring
 - Incrementally remove the C++ code and bootstrap dependency
 - Eventually: pure C + x86-64 ASM runtime
@@ -24,10 +25,59 @@ or causing crashes.**
 - Tests that only existed for a removed implementation are deleted or
   rewritten. Tests of user-visible behavior must keep passing.
 
+## Supported Platforms
+
+| Platform | Status |
+|----------|--------|
+| Linux (x86-64, plus whatever upstream's Linux CI covers) | Supported |
+| Windows (x64, plus the Win32/ARM64 builds upstream's CI covers) | Supported |
+| macOS, iOS, Android, WebAssembly (WASI, Emscripten) | **Not supported.** Their build trees and CI jobs are removed. |
+
+`configure` still has its macOS/iOS framework and WebAssembly options, but
+the directories those builds need are gone, so they fail.
+
 ## Changes from Upstream
 
 Newest first. Each entry says what was removed, what replaced it, and what
 was deliberately kept.
+
+### Drop macOS, iOS, Android and WebAssembly support
+
+Branch: `drop-non-linux-windows`
+
+re:python only targets Linux and Windows, so the other platforms' build
+trees and CI jobs were dead weight.
+
+- **Removed directories** (183 files, about 17,400 lines):
+
+  | Directory | What it was |
+  |-----------|-------------|
+  | `Android/` | Android build scripts and testbed app |
+  | `Apple/`, `iOS/` | iOS/tvOS/watchOS framework builds and Xcode testbed |
+  | `Mac/` | macOS installer, framework build, IDLE app, Python Launcher |
+  | `Platforms/emscripten/`, `Tools/wasm/` | Emscripten and WASI builds |
+
+- **Removed CI:** the `build-macos`, `build-android`, `build-ios`,
+  `build-emscripten` and `build-wasi` jobs in `build.yml` (and the
+  `reusable-macos`/`-wasi`/`-emscripten` workflows they called), and the
+  macOS jobs in `jit.yml` and `tail-call.yml`. Each PR's CI no longer
+  waits on macOS runners.
+- **Also removed:** the ruff pre-commit hooks for `Apple/` and `Tools/wasm/`
+  (Lint fails on a hook that matches no files), and the `CODEOWNERS` lines
+  for the removed directories.
+- **Kept on purpose:** the macOS, iOS and Android code inside the shared
+  code: `#ifdef __APPLE__` in `Modules/` and `Python/`, `sys.platform ==
+  'darwin'` branches in `Lib/`, helper modules like `_osx_support`,
+  `_ios_support` and `_android_support`, and the `configure` and
+  `Makefile.pre.in` options and targets. That code never runs on Linux or
+  Windows, and upstream security fixes often touch those files, so removing
+  it would turn every backport into a merge conflict. Public APIs such as
+  `platform.mac_ver()`, `platform.ios_ver()` and `platform.android_ver()`
+  keep working on every platform.
+- **Verified:** no Linux or Windows build step, test, regen target or SBOM
+  entry references the removed directories. The edited workflows parse, and
+  every `needs:` and reusable workflow they reference exists. CI on Linux
+  and Windows is run on this PR.
 
 ### Port `_pydecimal`'s formatting to C and drop the `_pydecimal` fallback
 
